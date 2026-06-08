@@ -67,7 +67,7 @@ func GetConnection() (net.Conn, error) {
 	return dialer.Dial("tcp", gConfig.Servers[rand.Intn(len(gConfig.Servers))])
 }
 
-func DoRegister(addr []byte, port []byte) (net.Conn, []byte, error) {
+func DoRegister(addr string, port uint16) (net.Conn, []byte, error) {
 	for i := 0; i < gConfig.Retries; i++ {
 		// Get new connection
 		tgtConn, err := GetConnection()
@@ -146,9 +146,10 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte) error {
 	}()
 
 	// Connect to the target
+	needReconnect := tgtConn == nil
 	for attempt := 0; attempt < gConfig.Retries; attempt++ {
 		// Reconnect
-		if tgtConn == nil {
+		if needReconnect {
 			var err error
 			if tgtConn, err = GetConnection(); err != nil {
 				slog.Debug("DoExchange -> GetConnection error", slog.String("err", err.Error()))
@@ -160,7 +161,7 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte) error {
 		if err := STCPDoControl(tgtConn, uid); err != nil {
 			slog.Debug("DoExchange -> STCPDoControl error", slog.String("err", err.Error()))
 			tgtConn.Close()
-			tgtConn = nil
+			needReconnect = true
 			continue
 		}
 
@@ -169,7 +170,7 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte) error {
 		if err != nil {
 			slog.Debug("DoExchange -> STCPHandleControlReply error", slog.String("err", err.Error()))
 			tgtConn.Close()
-			tgtConn = nil
+			needReconnect = true
 			continue
 		}
 
@@ -293,7 +294,7 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte) error {
 
 		tgtCancel()
 		tgtConn.Close()
-		tgtConn = nil
+		needReconnect = true
 
 		if doExit {
 			return nil
@@ -307,7 +308,7 @@ func HandleSession(srcConn net.Conn) {
 	// Report
 	slog.Info("New session", slog.String("srcAddr", srcConn.RemoteAddr().String()))
 	defer func() {
-		slog.Debug("Session closed", slog.Int("goroutine_num", runtime.NumGoroutine()))
+		slog.Debug("Session closed", slog.Int("numGoroutine", runtime.NumGoroutine()))
 		srcConn.Close()
 	}()
 
@@ -323,14 +324,14 @@ func HandleSession(srcConn net.Conn) {
 	}
 
 	// Handle SOCKS request
-	tgtAddr, tgtPort, err := SOCKSHandleRequest(srcConn)
+	tgtAddr, tgtPort, atyp, err := SOCKSHandleRequest(srcConn)
 	if err != nil {
 		slog.Debug("SOCKSHandleRequest error", slog.String("err", err.Error()))
 		return
 	}
 
 	// Confirm SOCKS connection
-	if err := SOCKSDoRequestReply(srcConn, 0x00); err != nil {
+	if err := SOCKSDoRequestReply(srcConn, 0x00, atyp, tgtAddr, tgtPort); err != nil {
 		slog.Error("SOCKSDoRequestReply error", slog.String("err", err.Error()))
 		return
 	}

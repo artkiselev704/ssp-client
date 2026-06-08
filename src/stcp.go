@@ -32,33 +32,35 @@ func STCPGetOpCode(conn net.Conn) (uint8, error) {
  * 	0x01 - REGISTER
  */
 
-func STCPDoRegister(conn net.Conn, addr []byte, port []byte) error {
+func STCPDoRegister(conn net.Conn, addr string, port uint16) error {
 	slog.Debug("[STCP] STCPDoRegister")
 
-	buf := []byte{STCPVersion, 0x01}
+	if len(addr) > 255 {
+		return errors.New("address string is too long")
+	}
 
-	tmp := make([]byte, 4)
-	copy(tmp, addr)
-	buf = append(buf, tmp...)
-
-	tmp = make([]byte, 2)
-	copy(tmp, port)
-	buf = append(buf, tmp...)
+	buf := []byte{STCPVersion, 0x01, byte(len(addr))}
+	buf = append(buf, addr...)
+	buf = binary.BigEndian.AppendUint16(buf, port)
 
 	_, err := conn.Write(buf)
 	return err
 }
 
-func STCPHandleRegister(conn net.Conn) ([]byte, []byte, error) {
+func STCPHandleRegister(conn net.Conn) (string, uint16, error) {
 	slog.Debug("[STCP] STCPHandleRegister")
 
-	buf := make([]byte, 6)
-
+	buf := make([]byte, 1)
 	if _, err := conn.Read(buf); err != nil {
-		return nil, nil, err
+		return "", 0, err
 	}
 
-	return buf[0:4], buf[4:6], nil
+	hostBuf := make([]byte, buf[0]+2)
+	if _, err := conn.Read(hostBuf); err != nil {
+		return "", 0, err
+	}
+
+	return string(hostBuf[:buf[0]]), binary.BigEndian.Uint16(hostBuf[buf[0] : buf[0]+2]), nil
 }
 
 func STCPDoRegisterReply(conn net.Conn, uid []byte) error {
