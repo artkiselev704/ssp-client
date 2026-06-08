@@ -176,7 +176,7 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte) error {
 
 		// If reply != 0x01, finish current session
 		if reply != 0x01 {
-			slog.Debug("DoExchange -> failed to take control", slog.Int("reply", int(reply)))
+			slog.Debug("DoExchange -> Failed to take control", slog.Int("reply", int(reply)))
 			return nil
 		}
 
@@ -305,28 +305,35 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte) error {
 }
 
 func HandleSession(srcConn net.Conn) {
-	// Report
-	slog.Info("New session", slog.String("srcAddr", srcConn.RemoteAddr().String()))
+	// Display info
+	RemoteAddr := srcConn.RemoteAddr().String()
+	slog.Info("HandleSession -> NEW",
+		slog.String("RemoteAddr", RemoteAddr),
+		slog.Int("NumGoroutine", runtime.NumGoroutine()),
+	)
 	defer func() {
-		slog.Debug("Session closed", slog.Int("numGoroutine", runtime.NumGoroutine()))
-		srcConn.Close()
+		slog.Info("HandleSession -> END",
+			slog.String("RemoteAddr", RemoteAddr),
+			slog.Int("NumGoroutine", runtime.NumGoroutine()),
+		)
 	}()
 
+	// Do SOCKS handshake
 	if err := SOCKSHandleHandshake(srcConn); err != nil {
-		slog.Debug("SOCKSHandleHandshake error", slog.String("err", err.Error()))
+		slog.Error("SOCKSHandleHandshake error", slog.String("err", err.Error()))
 		return
 	}
 
 	// Select SOCKS method
 	if err := SOCKSDoHandshakeReply(srcConn, 0x00); err != nil {
-		slog.Debug("SOCKSDoHandshakeReply error", slog.String("err", err.Error()))
+		slog.Error("SOCKSDoHandshakeReply error", slog.String("err", err.Error()))
 		return
 	}
 
 	// Handle SOCKS request
 	tgtAddr, tgtPort, atyp, err := SOCKSHandleRequest(srcConn)
 	if err != nil {
-		slog.Debug("SOCKSHandleRequest error", slog.String("err", err.Error()))
+		slog.Error("SOCKSHandleRequest error", slog.String("err", err.Error()))
 		return
 	}
 
@@ -339,15 +346,13 @@ func HandleSession(srcConn net.Conn) {
 	// Register new session
 	tgtConn, uid, err := DoRegister(tgtAddr, tgtPort)
 	if err != nil {
-		slog.Info("Failed to register new session", slog.String("err", err.Error()))
-		slog.Debug("DoRegister error", slog.String("err", err.Error()))
+		slog.Error("DoRegister error", slog.String("err", err.Error()))
 		return
 	}
 
 	// Exchange
 	if err = DoExchange(srcConn, tgtConn, uid); err != nil {
-		slog.Info("Failed to exchange data", slog.String("err", err.Error()))
-		slog.Debug("DoExchange error", slog.String("err", err.Error()))
+		slog.Error("DoExchange error", slog.String("err", err.Error()))
 		return
 	}
 }
@@ -376,7 +381,7 @@ func main() {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			slog.Warn("Failed to accept connection", slog.String("err", err.Error()))
+			slog.Error("Failed to accept connection", slog.String("err", err.Error()))
 			continue
 		}
 
