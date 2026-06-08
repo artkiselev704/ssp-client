@@ -333,7 +333,7 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte, serverIdx int) e
 }
 
 func HandleSession(srcConn net.Conn) {
-	// Display info
+	// Handle current session
 	RemoteAddr := srcConn.RemoteAddr().String()
 	slog.Info("HandleSession -> NEW",
 		slog.String("RemoteAddr", RemoteAddr),
@@ -344,6 +344,7 @@ func HandleSession(srcConn net.Conn) {
 			slog.String("RemoteAddr", RemoteAddr),
 			slog.Int("NumGoroutine", runtime.NumGoroutine()),
 		)
+		srcConn.Close()
 	}()
 
 	// Do SOCKS handshake
