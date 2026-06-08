@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand"
@@ -28,23 +27,16 @@ type Config struct {
 	LogLevel int      `json:"log_level"`
 }
 
-type DataPacket struct {
-	length uint16
-	data   []byte
-}
-
 func LoadConfig() error {
 	// Read config.json
 	file, err := os.Open("config.json")
 	if err != nil {
 		return err
 	}
-	defer func() {
-		_ = file.Close()
-	}()
+	defer file.Close()
 
-	err = json.NewDecoder(file).Decode(&gConfig)
-	if err != nil {
+	// Decode json
+	if err := json.NewDecoder(file).Decode(&gConfig); err != nil {
 		return err
 	}
 
@@ -54,9 +46,9 @@ func LoadConfig() error {
 		return err
 	}
 
+	// Configure TLS
 	certPool := x509.NewCertPool()
 	certPool.AppendCertsFromPEM(cert)
-
 	gTLSConfig = tls.Config{
 		RootCAs:            certPool,
 		InsecureSkipVerify: true,
@@ -77,34 +69,36 @@ func GetConnection() (net.Conn, error) {
 
 func DoRegister(addr []byte, port []byte) (net.Conn, []byte, error) {
 	for i := 0; i < gConfig.Retries; i++ {
+		// Get new connection
 		tgtConn, err := GetConnection()
 		if err != nil {
 			slog.Debug("DoRegister -> GetConnection error", slog.String("err", err.Error()))
 			continue
 		}
 
-		err = STCPDoRegister(tgtConn, addr, port)
-		if err != nil {
+		// Send register request
+		if err := STCPDoRegister(tgtConn, addr, port); err != nil {
 			slog.Debug("DoRegister -> STCPDoRegister error", slog.String("err", err.Error()))
-			_ = tgtConn.Close()
+			tgtConn.Close()
 			continue
 		}
 
+		// Read register response
 		uid, err := STCPHandleRegisterReply(tgtConn)
 		if err != nil {
 			slog.Debug("DoRegister -> STCPHandleRegisterReply error", slog.String("err", err.Error()))
-			_ = tgtConn.Close()
+			tgtConn.Close()
 			continue
 		}
 
 		return tgtConn, uid, nil
 	}
 
-	return nil, nil, errors.New("retries limit exceeded")
+	return nil, nil, fmt.Errorf("retries limit exceeded")
 }
 
 func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte) error {
-	// Setup global
+	// Session data
 	var (
 		sequenceNum uint8  = 0
 		pendingData []byte = nil
@@ -119,7 +113,7 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte) error {
 	srcCtx, srcCancel := context.WithCancel(context.Background())
 	defer srcCancel()
 
-	go func() { // reader
+	go func() { // source reader
 		for {
 			buf := make([]byte, 4096)
 			n, err := srcConn.Read(buf)
@@ -129,30 +123,30 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte) error {
 			}
 			if n > 0 {
 				select {
-				case srcInDataCh <- buf[:n]:
 				case <-srcCtx.Done():
 					return
+				case srcInDataCh <- buf[:n]:
 				}
 			}
 		}
 	}()
 
-	go func() { // writer
+	go func() { // source writer
 		for {
 			select {
+			case <-srcCtx.Done():
+				return
 			case data := <-srcOutDataCh:
 				if _, err := srcConn.Write(data); err != nil {
 					srcErrCh <- err
 					return
 				}
-			case <-srcCtx.Done():
-				return
 			}
 		}
 	}()
 
 	// Connect to the target
-	for i := 0; i < gConfig.Retries; i++ {
+	for attempt := 0; attempt < gConfig.Retries; attempt++ {
 		// Reconnect
 		if tgtConn == nil {
 			var err error
@@ -179,14 +173,14 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte) error {
 			continue
 		}
 
-		// If reply not successful, finish session
+		// If reply != 0x01, finish current session
 		if reply != 0x01 {
-			slog.Debug("failed to take control", slog.Int("reply", int(reply)))
+			slog.Debug("DoExchange -> failed to take control", slog.Int("reply", int(reply)))
 			return nil
 		}
 
 		// Reset attempts
-		i = 0
+		attempt = 0
 
 		// Exchange data
 		var (
@@ -200,9 +194,9 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte) error {
 				// Read from source
 				if pendingData == nil {
 					select {
-					case pendingData = <-srcInDataCh:
 					case <-tgtCtx.Done():
 						return
+					case pendingData = <-srcInDataCh:
 					}
 				}
 
@@ -225,6 +219,7 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte) error {
 
 		go func() { // target reader
 			for {
+				// Get opcode
 				opcode, err := STCPGetOpCode(tgtConn)
 				if err != nil {
 					tgtErrCh <- err
@@ -233,47 +228,48 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte) error {
 
 				switch opcode {
 				case 0x03: // PUSH
-					// Handle push
+					// Handle
 					inSequenceNum, data, err := STCPHandlePush(tgtConn)
 					if err != nil {
 						tgtErrCh <- err
 						return
 					}
 
-					// Write to source
+					// Write
 					select {
-					case srcOutDataCh <- data:
 					case <-tgtCtx.Done():
 						return
+					case srcOutDataCh <- data:
 					}
 
-					// Confirm push
+					// Confirm
 					if err := STCPDoPushAck(tgtConn, inSequenceNum); err != nil {
 						tgtErrCh <- err
 						return
 					}
 				case 0x04: // PUSH ACK
-					// Handle PUSH ACK
+					// Handle
 					inSequenceNum, err := STCPHandlePushAck(tgtConn)
 					if err != nil {
 						tgtErrCh <- err
 						return
 					}
 
-					// Compare numbers
-					if inSequenceNum != sequenceNum {
-						slog.Debug("inSequenceNum != sequenceNum",
-							slog.Int("sequenceNum", int(sequenceNum)),
-							slog.Int("inSequenceNum", int(inSequenceNum)),
-						)
-						continue
+					// Compare sequence numbers
+					if sequenceNum != inSequenceNum {
+						tgtErrCh <- fmt.Errorf("sequence numbers do not match (%d != %d)", sequenceNum, inSequenceNum)
+						return
 					}
 
-					// Confirm ACK
+					// Confirm
 					select {
-					case ackCh <- struct{}{}:
 					case <-tgtCtx.Done():
+						return
+					case ackCh <- struct{}{}:
 					}
+				case 0x05: // FINISH
+					srcCancel()
+					return
 				default:
 					tgtErrCh <- fmt.Errorf("unknown opcode: %d", opcode)
 					return
@@ -290,6 +286,7 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte) error {
 		case err := <-srcErrCh:
 			slog.Debug("DoExchange -> srcErrCh", slog.String("err", err.Error()))
 			doExit = true
+			STCPDoFinish(tgtConn)
 		case err := <-tgtErrCh:
 			slog.Debug("DoExchange -> tgtErrCh", slog.String("err", err.Error()))
 		}
@@ -303,27 +300,24 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte) error {
 		}
 	}
 
-	return errors.New("retries limit exceeded")
+	return fmt.Errorf("retries limit exceeded")
 }
 
 func HandleSession(srcConn net.Conn) {
-	// Handle current session
-	slog.Info("new session", slog.String("srcAddr", srcConn.RemoteAddr().String()))
+	// Report
+	slog.Info("New session", slog.String("srcAddr", srcConn.RemoteAddr().String()))
 	defer func() {
-		slog.Debug("session closed", slog.Int("goroutine_num", runtime.NumGoroutine()))
-		_ = srcConn.Close()
+		slog.Debug("Session closed", slog.Int("goroutine_num", runtime.NumGoroutine()))
+		srcConn.Close()
 	}()
 
-	// Handle SOCKS handshake
-	err := SOCKSHandleHandshake(srcConn)
-	if err != nil {
+	if err := SOCKSHandleHandshake(srcConn); err != nil {
 		slog.Debug("SOCKSHandleHandshake error", slog.String("err", err.Error()))
 		return
 	}
 
 	// Select SOCKS method
-	err = SOCKSDoHandshakeReply(srcConn, 0x00)
-	if err != nil {
+	if err := SOCKSDoHandshakeReply(srcConn, 0x00); err != nil {
 		slog.Debug("SOCKSDoHandshakeReply error", slog.String("err", err.Error()))
 		return
 	}
@@ -336,22 +330,22 @@ func HandleSession(srcConn net.Conn) {
 	}
 
 	// Confirm SOCKS connection
-	err = SOCKSDoRequestReply(srcConn, 0x00)
-	if err != nil {
+	if err := SOCKSDoRequestReply(srcConn, 0x00); err != nil {
 		slog.Error("SOCKSDoRequestReply error", slog.String("err", err.Error()))
 		return
 	}
 
-	// Register session
+	// Register new session
 	tgtConn, uid, err := DoRegister(tgtAddr, tgtPort)
 	if err != nil {
+		slog.Info("Failed to register new session", slog.String("err", err.Error()))
 		slog.Debug("DoRegister error", slog.String("err", err.Error()))
 		return
 	}
 
-	// Begin exchange
-	err = DoExchange(srcConn, tgtConn, uid)
-	if err != nil {
+	// Exchange
+	if err = DoExchange(srcConn, tgtConn, uid); err != nil {
+		slog.Info("Failed to exchange data", slog.String("err", err.Error()))
 		slog.Debug("DoExchange error", slog.String("err", err.Error()))
 		return
 	}
@@ -361,27 +355,27 @@ func main() {
 	// Load config
 	err := LoadConfig()
 	if err != nil {
-		slog.Error("failed to load config", slog.String("err", err.Error()))
+		slog.Error("Failed to load config", slog.String("err", err.Error()))
 		os.Exit(1)
 	}
 
+	// Set logging level
 	slog.SetLogLoggerLevel(slog.Level(gConfig.LogLevel))
 
 	// Setup listener
 	listener, err := net.Listen("tcp", gConfig.Host)
 	if err != nil {
-		slog.Error("failed to setup listener", slog.String("err", err.Error()))
+		slog.Error("Failed to setup listener", slog.String("err", err.Error()))
 		os.Exit(1)
 	}
 	defer listener.Close()
 
-	slog.Info("client started and ready to accept connections", slog.String("host", listener.Addr().String()))
-
 	// Wait for connections
+	slog.Info("Client started and ready to accept connections", slog.String("host", listener.Addr().String()))
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			slog.Warn("failed to accept connection", slog.String("err", err.Error()))
+			slog.Warn("Failed to accept connection", slog.String("err", err.Error()))
 			continue
 		}
 
