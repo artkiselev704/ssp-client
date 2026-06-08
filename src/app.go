@@ -22,7 +22,7 @@ var (
 type Config struct {
 	Host     string   `json:"host"`
 	Servers  []string `json:"servers"`
-	Retries  int      `json:"retries"`
+	Attempts int      `json:"attempts"`
 	Timeout  int      `json:"timeout"`
 	LogLevel int      `json:"log_level"`
 }
@@ -91,7 +91,7 @@ func GetConnection(previousServerIdx int) (net.Conn, int, error) {
 func DoRegister(addr string, port uint16) (net.Conn, []byte, int, error) {
 	serverIdx := -1
 
-	for i := 0; i < gConfig.Retries; i++ {
+	for attempt := 0; attempt < gConfig.Attempts; attempt++ {
 		var (
 			tgtConn net.Conn
 			err     error
@@ -122,7 +122,7 @@ func DoRegister(addr string, port uint16) (net.Conn, []byte, int, error) {
 		return tgtConn, uid, serverIdx, nil
 	}
 
-	return nil, nil, 0, fmt.Errorf("retries limit exceeded")
+	return nil, nil, 0, fmt.Errorf("attempts limit exceeded")
 }
 
 func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte, serverIdx int) error {
@@ -175,7 +175,7 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte, serverIdx int) e
 
 	// Connect to the target
 	needReconnect := tgtConn == nil
-	for attempt := 0; attempt < gConfig.Retries; attempt++ {
+	for attempt := 0; attempt < gConfig.Attempts; attempt++ {
 		// Reconnect
 		if needReconnect {
 			var err error
@@ -329,7 +329,7 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte, serverIdx int) e
 		}
 	}
 
-	return fmt.Errorf("retries limit exceeded")
+	return fmt.Errorf("attempts limit exceeded")
 }
 
 func HandleSession(srcConn net.Conn) {
