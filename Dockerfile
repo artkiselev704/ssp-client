@@ -2,9 +2,9 @@ FROM    golang:1.26 AS build
 
 WORKDIR /build
 
-COPY    ./src/app.go ./src/socks.go ./src/stcp.go ./src/utils.go ./
+COPY    ./src/app.go ./src/socks.go ./src/stcp.go ./
 
-RUN     CGO_ENABLED=0 GOOS=linux go build -o app app.go socks.go stcp.go utils.go
+RUN     CGO_ENABLED=0 GOOS=linux go build -o app app.go socks.go stcp.go
 
 FROM    gcr.io/distroless/static:nonroot
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"log/slog"
 	"net"
 )
 
@@ -19,6 +20,8 @@ func contains[T comparable](slice []T, value T) bool {
 }
 
 func SOCKSHandleHandshake(conn net.Conn) error {
+	slog.Debug("[SOCKS] SOCKSHandleHandshake")
+
 	buf := make([]byte, 2)
 
 	_, err := conn.Read(buf)
@@ -47,6 +50,8 @@ func SOCKSHandleHandshake(conn net.Conn) error {
 }
 
 func SOCKSDoHandshakeReply(conn net.Conn, method uint8) error {
+	slog.Debug("[SOCKS] SOCKSDoHandshakeReply")
+
 	buf := []byte{
 		SOCKSVersion, // VER
 		method,       // METHOD
@@ -58,6 +63,8 @@ func SOCKSDoHandshakeReply(conn net.Conn, method uint8) error {
 }
 
 func SOCKSHandleRequest(conn net.Conn) ([]byte, []byte, error) {
+	slog.Debug("[SOCKS] SOCKSHandleRequest")
+
 	buf := make([]byte, 10)
 
 	_, err := conn.Read(buf)
@@ -84,6 +91,8 @@ func SOCKSHandleRequest(conn net.Conn) ([]byte, []byte, error) {
 }
 
 func SOCKSDoRequestReply(conn net.Conn, reply uint8) error {
+	slog.Debug("[SOCKS] SOCKSDoRequestReply")
+
 	buf := []byte{
 		SOCKSVersion,           // VER
 		reply,                  // REP
