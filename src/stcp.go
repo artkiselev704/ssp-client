@@ -2,8 +2,8 @@ package main
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 )
@@ -16,13 +16,12 @@ func STCPGetOpCode(conn net.Conn) (uint8, error) {
 	slog.Debug("[STCP] GetOpCode")
 
 	buf := make([]byte, 2)
-
-	if _, err := conn.Read(buf); err != nil {
+	if _, err := io.ReadFull(conn, buf); err != nil {
 		return 0, err
 	}
 
 	if buf[0] != STCPVersion {
-		return 0, errors.New(fmt.Sprintf("unsupported STCP version (%d)", buf[0]))
+		return 0, fmt.Errorf("unsupported version (%d)", buf[0])
 	}
 
 	return buf[1], nil
@@ -36,7 +35,7 @@ func STCPDoRegister(conn net.Conn, addr string, port uint16) error {
 	slog.Debug("[STCP] STCPDoRegister")
 
 	if len(addr) > 255 {
-		return errors.New("address string is too long")
+		return fmt.Errorf("address string is too long")
 	}
 
 	buf := []byte{STCPVersion, 0x01, byte(len(addr))}
@@ -51,12 +50,12 @@ func STCPHandleRegister(conn net.Conn) (string, uint16, error) {
 	slog.Debug("[STCP] STCPHandleRegister")
 
 	buf := make([]byte, 1)
-	if _, err := conn.Read(buf); err != nil {
+	if _, err := io.ReadFull(conn, buf); err != nil {
 		return "", 0, err
 	}
 
 	hostBuf := make([]byte, buf[0]+2)
-	if _, err := conn.Read(hostBuf); err != nil {
+	if _, err := io.ReadFull(conn, hostBuf); err != nil {
 		return "", 0, err
 	}
 
@@ -78,8 +77,7 @@ func STCPHandleRegisterReply(conn net.Conn) ([]byte, error) {
 	slog.Debug("[STCP] STCPHandleRegisterReply")
 
 	buf := make([]byte, 16)
-
-	if _, err := conn.Read(buf); err != nil {
+	if _, err := io.ReadFull(conn, buf); err != nil {
 		return nil, err
 	}
 
@@ -107,8 +105,7 @@ func STCPHandleControl(conn net.Conn) ([]byte, error) {
 	slog.Debug("[STCP] STCPHandleControl")
 
 	buf := make([]byte, 16)
-
-	if _, err := conn.Read(buf); err != nil {
+	if _, err := io.ReadFull(conn, buf); err != nil {
 		return nil, err
 	}
 
@@ -126,7 +123,7 @@ func STCPHandleControlReply(conn net.Conn) (byte, error) {
 	slog.Debug("[STCP] STCPHandleControlReply")
 
 	buf := make([]byte, 1)
-	if _, err := conn.Read(buf); err != nil {
+	if _, err := io.ReadFull(conn, buf); err != nil {
 		return 0x00, err
 	}
 
@@ -156,17 +153,16 @@ func STCPHandlePush(conn net.Conn) (uint8, []byte, error) {
 	slog.Debug("[STCP] STCPHandlePush")
 
 	buf := make([]byte, 3)
-
-	if _, err := conn.Read(buf); err != nil {
+	if _, err := io.ReadFull(conn, buf); err != nil {
 		return 0, nil, err
 	}
 
-	data := make([]byte, binary.BigEndian.Uint16(buf[1:]))
-	if _, err := conn.Read(data); err != nil {
+	dataBuf := make([]byte, binary.BigEndian.Uint16(buf[1:]))
+	if _, err := io.ReadFull(conn, dataBuf); err != nil {
 		return 0, nil, err
 	}
 
-	return buf[0], data, nil
+	return buf[0], dataBuf, nil
 }
 
 /**
@@ -183,8 +179,7 @@ func STCPHandlePushAck(conn net.Conn) (uint8, error) {
 	slog.Debug("[STCP] STCPHandlePushAck")
 
 	buf := make([]byte, 1)
-
-	if _, err := conn.Read(buf); err != nil {
+	if _, err := io.ReadFull(conn, buf); err != nil {
 		return 0, err
 	}
 
