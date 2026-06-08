@@ -57,20 +57,48 @@ func LoadConfig() error {
 	return nil
 }
 
-func GetConnection() (net.Conn, error) {
+func GetConnection(previousServerIdx int) (net.Conn, int, error) {
+	// Check total size
+	total := len(gConfig.Servers)
+	if total == 0 {
+		return nil, 0, fmt.Errorf("no servers available")
+	}
+
+	// Select random server
+	idx := 0
+	for {
+		if total == 1 {
+			break
+		}
+
+		idx = rand.Intn(total)
+		if idx != previousServerIdx {
+			break
+		}
+	}
+
+	// Connect
 	dialer := &tls.Dialer{
 		NetDialer: &net.Dialer{
 			Timeout: time.Duration(gConfig.Timeout) * time.Second,
 		},
 		Config: &gTLSConfig,
 	}
-	return dialer.Dial("tcp", gConfig.Servers[rand.Intn(len(gConfig.Servers))])
+	conn, err := dialer.Dial("tcp", gConfig.Servers[idx])
+	return conn, idx, err
 }
 
-func DoRegister(addr string, port uint16) (net.Conn, []byte, error) {
+func DoRegister(addr string, port uint16) (net.Conn, []byte, int, error) {
+	serverIdx := -1
+
 	for i := 0; i < gConfig.Retries; i++ {
+		var (
+			tgtConn net.Conn
+			err     error
+		)
+
 		// Get new connection
-		tgtConn, err := GetConnection()
+		tgtConn, serverIdx, err = GetConnection(serverIdx)
 		if err != nil {
 			slog.Debug("DoRegister -> GetConnection error", slog.String("err", err.Error()))
 			continue
@@ -91,13 +119,13 @@ func DoRegister(addr string, port uint16) (net.Conn, []byte, error) {
 			continue
 		}
 
-		return tgtConn, uid, nil
+		return tgtConn, uid, serverIdx, nil
 	}
 
-	return nil, nil, fmt.Errorf("retries limit exceeded")
+	return nil, nil, 0, fmt.Errorf("retries limit exceeded")
 }
 
-func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte) error {
+func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte, serverIdx int) error {
 	// Session data
 	var (
 		sequenceNum uint8  = 0
@@ -151,7 +179,7 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte) error {
 		// Reconnect
 		if needReconnect {
 			var err error
-			if tgtConn, err = GetConnection(); err != nil {
+			if tgtConn, serverIdx, err = GetConnection(serverIdx); err != nil {
 				slog.Debug("DoExchange -> GetConnection error", slog.String("err", err.Error()))
 				continue
 			}
@@ -344,14 +372,14 @@ func HandleSession(srcConn net.Conn) {
 	}
 
 	// Register new session
-	tgtConn, uid, err := DoRegister(tgtAddr, tgtPort)
+	tgtConn, uid, serverIdx, err := DoRegister(tgtAddr, tgtPort)
 	if err != nil {
 		slog.Error("DoRegister error", slog.String("err", err.Error()))
 		return
 	}
 
 	// Exchange
-	if err = DoExchange(srcConn, tgtConn, uid); err != nil {
+	if err = DoExchange(srcConn, tgtConn, uid, serverIdx); err != nil {
 		slog.Error("DoExchange error", slog.String("err", err.Error()))
 		return
 	}
