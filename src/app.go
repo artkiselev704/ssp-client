@@ -128,7 +128,7 @@ func DoRegister(addr string, port uint16) (net.Conn, []byte, int, error) {
 func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte, serverIdx int) error {
 	// Session data
 	var (
-		sequenceNum uint8  = 0
+		srcSeqNum   uint8  = 0
 		pendingData []byte = nil
 	)
 
@@ -230,7 +230,7 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte, serverIdx int) e
 				}
 
 				// Write to target
-				if writerErr := STCPDoPush(tgtConn, sequenceNum, pendingData, uint16(len(pendingData))); writerErr != nil {
+				if writerErr := STCPDoPush(tgtConn, srcSeqNum, pendingData, uint16(len(pendingData))); writerErr != nil {
 					tgtErrCh <- writerErr
 					return
 				}
@@ -240,8 +240,8 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte, serverIdx int) e
 				case <-tgtCtx.Done():
 					return
 				case <-ackCh:
+					srcSeqNum++
 					pendingData = nil
-					sequenceNum++
 				}
 			}
 		}()
@@ -258,7 +258,7 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte, serverIdx int) e
 				switch opcode {
 				case 0x03: // PUSH
 					// Handle
-					inSequenceNum, data, readerErr := STCPHandlePush(tgtConn)
+					recTgtSeqNum, data, readerErr := STCPHandlePush(tgtConn)
 					if readerErr != nil {
 						tgtErrCh <- readerErr
 						return
@@ -272,21 +272,21 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte, serverIdx int) e
 					}
 
 					// Confirm
-					if readerErr = STCPDoPushAck(tgtConn, inSequenceNum); readerErr != nil {
+					if readerErr = STCPDoPushAck(tgtConn, recTgtSeqNum); readerErr != nil {
 						tgtErrCh <- readerErr
 						return
 					}
 				case 0x04: // PUSH ACK
 					// Handle
-					inSequenceNum, readerErr := STCPHandlePushAck(tgtConn)
+					recSrcSeqNum, readerErr := STCPHandlePushAck(tgtConn)
 					if readerErr != nil {
 						tgtErrCh <- readerErr
 						return
 					}
 
 					// Compare sequence numbers
-					if sequenceNum != inSequenceNum {
-						tgtErrCh <- fmt.Errorf("sequence numbers do not match (%d != %d)", sequenceNum, inSequenceNum)
+					if srcSeqNum != recSrcSeqNum {
+						tgtErrCh <- fmt.Errorf("source sequence numbers do not match (%d != %d)", srcSeqNum, recSrcSeqNum)
 						return
 					}
 
