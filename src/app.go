@@ -27,6 +27,11 @@ type Config struct {
 	LogLevel int      `json:"log_level"`
 }
 
+type InboundData struct {
+	seqNum uint8
+	data   []byte
+}
+
 func LoadConfig() error {
 	// Read config.json
 	file, err := os.Open("config.json")
@@ -136,7 +141,7 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte, serverIdx int) e
 	var (
 		srcErrCh     = make(chan error, 10)
 		srcInDataCh  = make(chan []byte, 1)
-		srcOutDataCh = make(chan []byte, 1)
+		srcOutDataCh = make(chan InboundData, 1)
 	)
 	srcCtx, srcCancel := context.WithCancel(context.Background())
 	defer srcCancel()
@@ -160,15 +165,21 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte, serverIdx int) e
 	}()
 
 	go func() { // source writer
+		tgtSeqNum := uint8(0)
 		for {
 			select {
 			case <-srcCtx.Done():
 				return
-			case data := <-srcOutDataCh:
-				if _, writerErr := srcConn.Write(data); writerErr != nil {
+			case inboundData := <-srcOutDataCh:
+				if tgtSeqNum != inboundData.seqNum {
+					slog.Debug(fmt.Sprintf("Warning: target sequence numbers do not match (%d != %d)", tgtSeqNum, inboundData.seqNum))
+					continue
+				}
+				if _, writerErr := srcConn.Write(inboundData.data); writerErr != nil {
 					srcErrCh <- writerErr
 					return
 				}
+				tgtSeqNum++
 			}
 		}
 	}()
@@ -268,7 +279,7 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte, serverIdx int) e
 					select {
 					case <-tgtCtx.Done():
 						return
-					case srcOutDataCh <- data:
+					case srcOutDataCh <- InboundData{recTgtSeqNum, data}:
 					}
 
 					// Confirm
