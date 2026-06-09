@@ -13,7 +13,7 @@ const (
 )
 
 func STCPGetOpCode(conn net.Conn) (uint8, error) {
-	slog.Debug("[STCP] GetOpCode")
+	slog.Debug("[STCP] GetOpCode BEGIN")
 
 	buf := make([]byte, 2)
 	if _, err := io.ReadFull(conn, buf); err != nil {
@@ -24,6 +24,7 @@ func STCPGetOpCode(conn net.Conn) (uint8, error) {
 		return 0, fmt.Errorf("unsupported version (%d)", buf[0])
 	}
 
+	slog.Debug("[STCP] GetOpCode", slog.Int("opcode", int(buf[1])))
 	return buf[1], nil
 }
 
@@ -32,7 +33,7 @@ func STCPGetOpCode(conn net.Conn) (uint8, error) {
  */
 
 func STCPDoRegister(conn net.Conn, addr string, port uint16) error {
-	slog.Debug("[STCP] STCPDoRegister")
+	slog.Debug("[STCP] STCPDoRegister", slog.String("addr", addr), slog.Int("port", int(port)))
 
 	if len(addr) > 255 {
 		return fmt.Errorf("address string is too long")
@@ -47,7 +48,7 @@ func STCPDoRegister(conn net.Conn, addr string, port uint16) error {
 }
 
 func STCPHandleRegister(conn net.Conn) (string, uint16, error) {
-	slog.Debug("[STCP] STCPHandleRegister")
+	slog.Debug("[STCP] STCPHandleRegister BEGIN")
 
 	buf := make([]byte, 1)
 	if _, err := io.ReadFull(conn, buf); err != nil {
@@ -59,11 +60,15 @@ func STCPHandleRegister(conn net.Conn) (string, uint16, error) {
 		return "", 0, err
 	}
 
-	return string(hostBuf[:buf[0]]), binary.BigEndian.Uint16(hostBuf[buf[0] : buf[0]+2]), nil
+	addr := string(hostBuf[:buf[0]])
+	port := binary.BigEndian.Uint16(hostBuf[buf[0] : buf[0]+2])
+
+	slog.Debug("[STCP] STCPHandleRegister", slog.String("addr", addr), slog.Int("port", int(port)))
+	return addr, port, nil
 }
 
 func STCPDoRegisterReply(conn net.Conn, uid []byte) error {
-	slog.Debug("[STCP] STCPDoRegisterReply")
+	slog.Debug("[STCP] STCPDoRegisterReply", slog.String("uid", string(uid)))
 
 	buf := make([]byte, 16)
 
@@ -74,13 +79,14 @@ func STCPDoRegisterReply(conn net.Conn, uid []byte) error {
 }
 
 func STCPHandleRegisterReply(conn net.Conn) ([]byte, error) {
-	slog.Debug("[STCP] STCPHandleRegisterReply")
+	slog.Debug("[STCP] STCPHandleRegisterReply BEGIN")
 
 	buf := make([]byte, 16)
 	if _, err := io.ReadFull(conn, buf); err != nil {
 		return nil, err
 	}
 
+	slog.Debug("[STCP] STCPHandleRegisterReply", slog.String("uid", string(buf)))
 	return buf, nil
 }
 
@@ -89,7 +95,7 @@ func STCPHandleRegisterReply(conn net.Conn) ([]byte, error) {
  */
 
 func STCPDoControl(conn net.Conn, uid []byte) error {
-	slog.Debug("[STCP] STCPDoControl")
+	slog.Debug("[STCP] STCPDoControl", slog.String("uid", string(uid)))
 
 	buf := []byte{STCPVersion, 0x02}
 
@@ -102,31 +108,33 @@ func STCPDoControl(conn net.Conn, uid []byte) error {
 }
 
 func STCPHandleControl(conn net.Conn) ([]byte, error) {
-	slog.Debug("[STCP] STCPHandleControl")
+	slog.Debug("[STCP] STCPHandleControl BEGIN")
 
 	buf := make([]byte, 16)
 	if _, err := io.ReadFull(conn, buf); err != nil {
 		return nil, err
 	}
 
+	slog.Debug("[STCP] STCPHandleControl", slog.String("uid", string(buf)))
 	return buf, nil
 }
 
 func STCPDoControlReply(conn net.Conn, reply byte) error {
-	slog.Debug("[STCP] STCPDoControlReply")
+	slog.Debug("[STCP] STCPDoControlReply", slog.Int("reply", int(reply)))
 
 	_, err := conn.Write([]byte{reply})
 	return err
 }
 
 func STCPHandleControlReply(conn net.Conn) (byte, error) {
-	slog.Debug("[STCP] STCPHandleControlReply")
+	slog.Debug("[STCP] STCPHandleControlReply BEGIN")
 
 	buf := make([]byte, 1)
 	if _, err := io.ReadFull(conn, buf); err != nil {
 		return 0x00, err
 	}
 
+	slog.Debug("[STCP] STCPHandleControlReply", slog.Int("reply", int(buf[0])))
 	return buf[0], nil
 }
 
@@ -135,7 +143,7 @@ func STCPHandleControlReply(conn net.Conn) (byte, error) {
  */
 
 func STCPDoPush(conn net.Conn, sequenceNum uint8, data []byte, length uint16) error {
-	slog.Debug("[STCP] STCPDoPush")
+	slog.Debug("[STCP] STCPDoPush", slog.Int("sequenceNum", int(sequenceNum)), slog.Int("length", int(length)))
 
 	buf := []byte{STCPVersion, 0x03, sequenceNum}
 
@@ -150,7 +158,7 @@ func STCPDoPush(conn net.Conn, sequenceNum uint8, data []byte, length uint16) er
 }
 
 func STCPHandlePush(conn net.Conn) (uint8, []byte, error) {
-	slog.Debug("[STCP] STCPHandlePush")
+	slog.Debug("[STCP] STCPHandlePush BEGIN")
 
 	buf := make([]byte, 3)
 	if _, err := io.ReadFull(conn, buf); err != nil {
@@ -162,6 +170,7 @@ func STCPHandlePush(conn net.Conn) (uint8, []byte, error) {
 		return 0, nil, err
 	}
 
+	slog.Debug("[STCP] STCPHandlePush", slog.Int("sequenceNum", int(buf[0])), slog.Int("length", len(dataBuf)))
 	return buf[0], dataBuf, nil
 }
 
@@ -169,20 +178,21 @@ func STCPHandlePush(conn net.Conn) (uint8, []byte, error) {
  *	0x04 - PUSH ACK
  */
 
-func STCPDoPushAck(conn net.Conn, seq uint8) error {
-	slog.Debug("[STCP] STCPDoPushAck")
-	_, err := conn.Write([]byte{STCPVersion, 0x04, seq})
+func STCPDoPushAck(conn net.Conn, sequenceNum uint8) error {
+	slog.Debug("[STCP] STCPDoPushAck", slog.Int("sequenceNum", int(sequenceNum)))
+	_, err := conn.Write([]byte{STCPVersion, 0x04, sequenceNum})
 	return err
 }
 
 func STCPHandlePushAck(conn net.Conn) (uint8, error) {
-	slog.Debug("[STCP] STCPHandlePushAck")
+	slog.Debug("[STCP] STCPHandlePushAck BEGIN")
 
 	buf := make([]byte, 1)
 	if _, err := io.ReadFull(conn, buf); err != nil {
 		return 0, err
 	}
 
+	slog.Debug("[STCP] STCPHandlePushAck", slog.Int("sequenceNum", int(buf[0])))
 	return buf[0], nil
 }
 
@@ -192,7 +202,6 @@ func STCPHandlePushAck(conn net.Conn) (uint8, error) {
 
 func STCPDoFinish(conn net.Conn) error {
 	slog.Debug("[STCP] STCPDoFinish")
-
 	_, err := conn.Write([]byte{STCPVersion, 0x05})
 	return err
 }
