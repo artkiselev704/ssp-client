@@ -335,12 +335,12 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte, serverIdx int) e
 func HandleSession(srcConn net.Conn) {
 	// Handle current session
 	RemoteAddr := srcConn.RemoteAddr().String()
-	slog.Info("HandleSession -> NEW",
+	slog.Info("New session",
 		slog.String("RemoteAddr", RemoteAddr),
 		slog.Int("NumGoroutine", runtime.NumGoroutine()),
 	)
 	defer func() {
-		slog.Info("HandleSession -> END",
+		slog.Info("Session finished",
 			slog.String("RemoteAddr", RemoteAddr),
 			slog.Int("NumGoroutine", runtime.NumGoroutine()),
 		)
@@ -349,39 +349,57 @@ func HandleSession(srcConn net.Conn) {
 
 	// Do SOCKS handshake
 	if err := SOCKSHandleHandshake(srcConn); err != nil {
-		slog.Error("SOCKSHandleHandshake error", slog.String("err", err.Error()))
+		slog.Error("SOCKSHandleHandshake error",
+			slog.String("RemoteAddr", RemoteAddr),
+			slog.String("err", err.Error()),
+		)
 		return
 	}
 
 	// Select SOCKS method
 	if err := SOCKSDoHandshakeReply(srcConn, 0x00); err != nil {
-		slog.Error("SOCKSDoHandshakeReply error", slog.String("err", err.Error()))
+		slog.Error("SOCKSDoHandshakeReply error",
+			slog.String("RemoteAddr", RemoteAddr),
+			slog.String("err", err.Error()),
+		)
 		return
 	}
 
 	// Handle SOCKS request
 	tgtAddr, tgtPort, atyp, err := SOCKSHandleRequest(srcConn)
 	if err != nil {
-		slog.Error("SOCKSHandleRequest error", slog.String("err", err.Error()))
+		slog.Error("SOCKSHandleRequest error",
+			slog.String("RemoteAddr", RemoteAddr),
+			slog.String("err", err.Error()),
+		)
 		return
 	}
 
 	// Confirm SOCKS connection
-	if err := SOCKSDoRequestReply(srcConn, 0x00, atyp, tgtAddr, tgtPort); err != nil {
-		slog.Error("SOCKSDoRequestReply error", slog.String("err", err.Error()))
+	if err = SOCKSDoRequestReply(srcConn, 0x00, atyp, tgtAddr, tgtPort); err != nil {
+		slog.Error("SOCKSDoRequestReply error",
+			slog.String("RemoteAddr", RemoteAddr),
+			slog.String("err", err.Error()),
+		)
 		return
 	}
 
 	// Register new session
 	tgtConn, uid, serverIdx, err := DoRegister(tgtAddr, tgtPort)
 	if err != nil {
-		slog.Error("DoRegister error", slog.String("err", err.Error()))
+		slog.Error("DoRegister error",
+			slog.String("RemoteAddr", RemoteAddr),
+			slog.String("err", err.Error()),
+		)
 		return
 	}
 
 	// Exchange
 	if err = DoExchange(srcConn, tgtConn, uid, serverIdx); err != nil {
-		slog.Error("DoExchange error", slog.String("err", err.Error()))
+		slog.Error("DoExchange error",
+			slog.String("RemoteAddr", RemoteAddr),
+			slog.String("err", err.Error()),
+		)
 		return
 	}
 }
