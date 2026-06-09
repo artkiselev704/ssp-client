@@ -144,9 +144,9 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte, serverIdx int) e
 	go func() { // source reader
 		for {
 			buf := make([]byte, 4096)
-			n, err := srcConn.Read(buf)
-			if err != nil {
-				srcErrCh <- err
+			n, readerErr := srcConn.Read(buf)
+			if readerErr != nil {
+				srcErrCh <- readerErr
 				return
 			}
 			if n > 0 {
@@ -165,8 +165,8 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte, serverIdx int) e
 			case <-srcCtx.Done():
 				return
 			case data := <-srcOutDataCh:
-				if _, err := srcConn.Write(data); err != nil {
-					srcErrCh <- err
+				if _, writerErr := srcConn.Write(data); writerErr != nil {
+					srcErrCh <- writerErr
 					return
 				}
 			}
@@ -230,8 +230,8 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte, serverIdx int) e
 				}
 
 				// Write to target
-				if err := STCPDoPush(tgtConn, sequenceNum, pendingData, uint16(len(pendingData))); err != nil {
-					tgtErrCh <- err
+				if writerErr := STCPDoPush(tgtConn, sequenceNum, pendingData, uint16(len(pendingData))); writerErr != nil {
+					tgtErrCh <- writerErr
 					return
 				}
 
@@ -249,18 +249,18 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte, serverIdx int) e
 		go func() { // target reader
 			for {
 				// Get opcode
-				opcode, err := STCPGetOpCode(tgtConn)
-				if err != nil {
-					tgtErrCh <- err
+				opcode, readerErr := STCPGetOpCode(tgtConn)
+				if readerErr != nil {
+					tgtErrCh <- readerErr
 					return
 				}
 
 				switch opcode {
 				case 0x03: // PUSH
 					// Handle
-					inSequenceNum, data, err := STCPHandlePush(tgtConn)
-					if err != nil {
-						tgtErrCh <- err
+					inSequenceNum, data, readerErr := STCPHandlePush(tgtConn)
+					if readerErr != nil {
+						tgtErrCh <- readerErr
 						return
 					}
 
@@ -272,15 +272,15 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte, serverIdx int) e
 					}
 
 					// Confirm
-					if err := STCPDoPushAck(tgtConn, inSequenceNum); err != nil {
-						tgtErrCh <- err
+					if readerErr = STCPDoPushAck(tgtConn, inSequenceNum); readerErr != nil {
+						tgtErrCh <- readerErr
 						return
 					}
 				case 0x04: // PUSH ACK
 					// Handle
-					inSequenceNum, err := STCPHandlePushAck(tgtConn)
-					if err != nil {
-						tgtErrCh <- err
+					inSequenceNum, readerErr := STCPHandlePushAck(tgtConn)
+					if readerErr != nil {
+						tgtErrCh <- readerErr
 						return
 					}
 
@@ -300,7 +300,7 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte, serverIdx int) e
 					srcCancel()
 					return
 				default:
-					tgtErrCh <- fmt.Errorf("unknown opcode: %d", opcode)
+					tgtErrCh <- fmt.Errorf("unknown opcode (%d)", opcode)
 					return
 				}
 			}
@@ -312,17 +312,17 @@ func DoExchange(srcConn net.Conn, tgtConn net.Conn, uid []byte, serverIdx int) e
 		select {
 		case <-tgtCtx.Done():
 			doExit = true
-		case err := <-srcErrCh:
+		case err = <-srcErrCh:
 			slog.Debug("DoExchange -> srcErrCh", slog.String("err", err.Error()))
 			doExit = true
 			STCPDoFinish(tgtConn)
-		case err := <-tgtErrCh:
+		case err = <-tgtErrCh:
 			slog.Debug("DoExchange -> tgtErrCh", slog.String("err", err.Error()))
+			needReconnect = true
 		}
 
 		tgtCancel()
 		tgtConn.Close()
-		needReconnect = true
 
 		if doExit {
 			return nil
